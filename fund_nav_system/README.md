@@ -2,6 +2,26 @@
 
 纯 Python 实现，监控阿里云企业邮箱 → 解析净值附件/正文 → 匹配跟踪列表 → 入库 → 提供查询接口。
 
+## 给最终用户:Windows 一点即用
+
+如果你只是想要"双击就更新"的净值跟踪表,不需要装 Python:
+
+1. 打开仓库的 **Actions** 标签 → 选择最新一次 *Build Windows EXE* 跑通的 run
+2. 拉到底,在 **Artifacts** 里下载 `nav-updater-windows`(zip 包)
+3. 解压得到 `净值跟踪更新.exe`,放到桌面或任意位置
+4. **双击** 它
+
+第一次运行:
+- 会从内置数据库种子复制到 `%LOCALAPPDATA%\FundNAV\data\fund_nav.db`(以后所有数据都在这里)
+- 拉最近 7 天的净值邮件
+- 把最新跟踪表写到 **桌面\净值跟踪表.xlsx**
+
+之后想更新就再双击一次,几秒钟出新表。
+
+**邮箱密码换了怎么办?** 在 GitHub 仓库 → Settings → Secrets and variables → Actions 中更新 `EMAIL_PASSWORD` 这个 secret,然后到 Actions 标签手动触发一次 *Build Windows EXE*,等新 exe 出来重新下载。
+
+---
+
 ## 功能特性
 
 - **邮箱监控**：IMAP 轮询（默认 30 分钟）或 IDLE 长连接（备用）。
@@ -21,9 +41,11 @@ fund_nav_system/
 ├── requirements.txt
 ├── README.md
 ├── main.py                  # CLI 入口
+├── app_entry.py             # 单击 exe 的入口(打包用)
+├── nav_updater.spec         # PyInstaller 打包脚本
 ├── init_db.py               # 初始化 + 导入 21 只预设基金
 ├── src/
-│   ├── config.py            # 配置中心
+│   ├── config.py            # 配置中心(含 frozen 模式分支)
 │   ├── logger.py            # loguru 配置
 │   ├── database.py          # SQLAlchemy ORM + DatabaseManager
 │   ├── email_client.py      # IMAP 客户端
@@ -31,7 +53,11 @@ fund_nav_system/
 │   ├── fund_matcher.py      # 基金匹配
 │   ├── sync_engine.py       # 主工作流
 │   └── query_api.py         # 查询接口
-├── data/                    # SQLite + 附件 + 导出
+├── scripts/
+│   └── backfill_cumulative.py  # 一次性回填累计净值的脚本
+├── dist_seed/
+│   └── fund_nav.db          # 打包用的种子数据库(跟随仓库版本)
+├── data/                    # SQLite + 附件 + 导出(本地运行用)
 └── logs/                    # 日志
 ```
 
@@ -246,3 +272,30 @@ User=appuser
 [Install]
 WantedBy=multi-user.target
 ```
+
+## Windows EXE 打包流水线
+
+`.github/workflows/build-windows.yml` 在 `windows-latest` runner 上跑 PyInstaller,产物是单文件 `dist/净值跟踪更新.exe`。
+
+**触发条件**
+- 推送到 main 且改动了 `fund_nav_system/**`(自动)
+- 在 Actions 页面手动 *Run workflow*
+
+**关键约束**
+- 仓库 secret `EMAIL_PASSWORD` 必须有值,否则构建直接 fail
+- `dist_seed/fund_nav.db` 必须存在(每次想用新历史数据出包,先 `cp data/fund_nav.db dist_seed/` 再 push)
+
+**本地打包**(Windows 机器上,可选)
+```powershell
+pip install pyinstaller==6.6.0
+pyinstaller nav_updater.spec --noconfirm --clean
+```
+
+**exe 运行时的路径**
+- 资源(.env、种子 DB):随 exe 解压到临时目录(`sys._MEIPASS`)
+- 持久数据:`%LOCALAPPDATA%\FundNAV\`
+  - `data\fund_nav.db` - 用户的数据库
+  - `data\attachments\` - 邮件附件副本
+  - `data\exports\` - 备份导出
+  - `logs\` - loguru 日志
+- 净值表输出:`%USERPROFILE%\Desktop\净值跟踪表.xlsx`(覆盖)

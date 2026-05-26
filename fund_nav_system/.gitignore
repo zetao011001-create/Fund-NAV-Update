@@ -10,3 +10,8 @@ logs/*.log
 !data/exports/.gitkeep
 !logs/.gitkeep
 .DS_Store
+
+# PyInstaller build artifacts (note: dist_seed/ is intentionally tracked)
+build/
+dist/
+*.spec.bak

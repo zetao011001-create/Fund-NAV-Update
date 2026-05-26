@@ -1,0 +1,84 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "fund_nav_system/**"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: fund_nav_system
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: fund_nav_system/requirements.txt
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.6.0
+
+      - name: Verify EMAIL_PASSWORD secret is configured
+        shell: pwsh
+        env:
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: |
+          if (-not $env:EMAIL_PASSWORD) {
+            Write-Error "EMAIL_PASSWORD secret is not set. Configure it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          }
+
+      - name: Verify seed DB exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist_seed/fund_nav.db")) {
+            Write-Error "Seed DB missing. Run 'cp data/fund_nav.db dist_seed/' locally and commit before building."
+            exit 1
+          }
+          Get-Item dist_seed/fund_nav.db | Format-List Name, Length, LastWriteTime
+
+      - name: Write .env from secrets
+        shell: pwsh
+        env:
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: |
+          $envContent = @"
+          EMAIL_ADDRESS=datareception@ansurefo.com
+          EMAIL_PASSWORD=$env:EMAIL_PASSWORD
+          IMAP_SERVER=imap.qiye.aliyun.com
+          IMAP_PORT=993
+          POLL_INTERVAL=30
+          LOG_LEVEL=INFO
+          EMAIL_LOOKBACK_DAYS=7
+          MARK_AS_READ=false
+          "@
+          [System.IO.File]::WriteAllText("$pwd\.env", $envContent, [System.Text.UTF8Encoding]::new($false))
+
+      - name: Build with PyInstaller
+        run: pyinstaller nav_updater.spec --noconfirm --clean
+
+      - name: Show build output
+        shell: pwsh
+        run: |
+          Write-Host "--- dist/ ---"
+          Get-ChildItem dist | Format-Table Name, Length, LastWriteTime
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nav-updater-windows
+          path: fund_nav_system/dist/*.exe
+          retention-days: 90
+          if-no-files-found: error
