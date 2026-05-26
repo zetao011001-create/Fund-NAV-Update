@@ -20,20 +20,72 @@
 
 > 如果窗口闪退,桌面会生成 `净值跟踪更新-错误日志.txt`,把它内容发给维护者排查。
 
-### 🟡 我要改代码 / 加功能 / 在 Mac 上跑
+### 🟡 我要改代码 / 加功能 / 不用 exe 直接跑源码
 
 完整开发文档:[`fund_nav_system/README.md`](fund_nav_system/README.md)
 
-最小启动:
+需要 **Python 3.10 或更高版本**。
+
+#### macOS / Linux
+
 ```bash
 cd fund_nav_system
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # 填入邮箱密码
-python main.py init-db
+cp .env.example .env                       # 用编辑器打开,填入 EMAIL_PASSWORD
+python main.py init-db                     # 首次运行
 python main.py run-once
 python main.py export --output ~/Desktop/净值跟踪表.xlsx
 ```
+
+#### Windows
+
+先从 [python.org](https://www.python.org/downloads/windows/) 装 Python 3.10+,**安装时务必勾选 "Add Python to PATH"**。
+
+打开 **PowerShell**,在仓库根目录里执行:
+
+```powershell
+cd fund_nav_system
+
+# 1) 创建并激活虚拟环境
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+# 如果提示安全策略阻止脚本,先一次性放行(只需做一次):
+#   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+
+# 2) 装依赖
+pip install -r requirements.txt
+
+# 3) 配置 .env
+copy .env.example .env
+notepad .env                               # 把 EMAIL_PASSWORD 改成真实密码后保存
+
+# 4) 首次:建库 + 导入 21 只预设基金
+python main.py init-db
+
+# 5) 日常:拉邮件 → 导出净值表到桌面
+python main.py run-once
+python main.py export --output "$env:USERPROFILE\Desktop\净值跟踪表.xlsx"
+```
+
+之后每次想更新,**只需重复第 5 步那两行**(虚拟环境激活后就能跑)。
+
+如果是新开 PowerShell 窗口,先重新激活环境:
+```powershell
+cd <仓库路径>\fund_nav_system
+.\.venv\Scripts\Activate.ps1
+```
+
+> **更省事的写法**:把第 5 步两行存成一个 `更新净值.bat` 文件,以后双击它就行。示例:
+>
+> ```bat
+> @echo off
+> cd /d "%~dp0fund_nav_system"
+> call .venv\Scripts\activate.bat
+> python main.py run-once
+> python main.py export --output "%USERPROFILE%\Desktop\净值跟踪表.xlsx"
+> pause
+> ```
 
 ---
 
