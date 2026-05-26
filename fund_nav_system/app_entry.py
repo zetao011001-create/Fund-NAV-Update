@@ -3,15 +3,25 @@
 Pulls latest NAV emails and writes 净值跟踪表.xlsx to the user's Desktop.
 Designed to be invoked by double-clicking the packaged exe — the console
 window stays open at the end so the user can read the result.
+
+Robustness:
+- Forces UTF-8 + line-buffered stdout so prints flush immediately.
+- Writes a crash log to the Desktop on any failure (including SystemExit
+  and native-level crashes that bypass Exception).
+- Uses Windows `pause` instead of input() so the window survives even when
+  stdin is detached / EOF.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 
+# ---------------------------------------------------------------- bootstrap ---
 def _setup_console_utf8() -> None:
     """Force UTF-8 in Windows cmd so Chinese output renders correctly."""
     if sys.platform != "win32":
@@ -27,70 +37,119 @@ def _setup_console_utf8() -> None:
         stream = getattr(sys, stream_name, None)
         if stream is not None and hasattr(stream, "reconfigure"):
             try:
-                stream.reconfigure(encoding="utf-8")
+                stream.reconfigure(encoding="utf-8", line_buffering=True)
             except Exception:
                 pass
 
 
 def _desktop_path() -> Path:
     home = Path.home()
-    for c in (home / "Desktop", home / "桌面"):
-        if c.exists():
-            return c
+    for candidate in (home / "Desktop", home / "桌面"):
+        if candidate.exists():
+            return candidate
     return home
 
 
-def _wait_for_keypress(prompt: str = "按回车键关闭...") -> None:
+def _crash_log_path() -> Path:
+    return _desktop_path() / "净值跟踪更新-错误日志.txt"
+
+
+def _pause(prompt: str = "按回车键关闭...") -> None:
+    print(prompt, flush=True)
+    if sys.platform == "win32":
+        try:
+            os.system("pause >nul")
+            return
+        except Exception:
+            pass
     try:
-        input(prompt)
-    except EOFError:
+        input()
+    except Exception:
         pass
 
 
+# --------------------------------------------------------------------- main ---
 def main() -> int:
     _setup_console_utf8()
 
-    print("=" * 50)
-    print("  基金净值更新工具")
-    print("=" * 50)
-    print()
+    log_buffer: list[str] = []
+
+    def emit(msg: str) -> None:
+        line = f"{datetime.now().isoformat(timespec='seconds')} | {msg}"
+        log_buffer.append(line)
+        print(msg, flush=True)
+
+    def dump_crash_log(reason: str, tb_text: str) -> None:
+        try:
+            path = _crash_log_path()
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"原因: {reason}\n\n")
+                f.write("--- 控制台输出 ---\n")
+                f.write("\n".join(log_buffer) + "\n\n")
+                f.write("--- Python traceback ---\n")
+                f.write(tb_text)
+            emit(f"详细错误已保存到: {path}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"(无法写入错误日志: {exc})", flush=True)
+
+    emit("=" * 50)
+    emit("  基金净值更新工具")
+    emit("=" * 50)
+    emit("")
 
     try:
-        # Defer heavy imports so any failure is captured by the outer try.
+        emit("[0/2] 正在加载模块... (首次启动可能需要 10-30 秒)")
         from src.query_api import export_to_excel
         from src.sync_engine import SyncEngine
 
-        print("[1/2] 正在同步最新邮件...")
+        emit("[1/2] 正在同步最新邮件...")
         stats = SyncEngine().run_once()
-        print(
+        emit(
             f"      扫描 {stats.emails_scanned} 封, "
             f"新增 {stats.nav_inserted} 条, 更新 {stats.nav_updated} 条"
         )
         if stats.aborted:
-            print("      警告: 同步过程中出错,可能拉取的数据不完整")
+            emit("      警告: 同步过程中出错,可能拉取的数据不完整")
 
-        print()
-        print("[2/2] 正在导出净值跟踪表...")
+        emit("")
+        emit("[2/2] 正在导出净值跟踪表...")
         output = _desktop_path() / "净值跟踪表.xlsx"
         path = export_to_excel(output_path=output)
-        print(f"      已保存到: {path}")
+        emit(f"      已保存到: {path}")
 
-        print()
-        print("完成。")
-        _wait_for_keypress()
+        emit("")
+        emit("完成。")
+        _pause()
         return 0
 
-    except Exception as exc:  # noqa: BLE001 - present any failure to the user
-        print()
-        print("出错了:")
-        print(f"  {exc}")
-        print()
-        print("--- 详细信息 ---")
-        traceback.print_exc()
-        print()
-        _wait_for_keypress("出错了,按回车键关闭...")
+    except BaseException as exc:  # noqa: BLE001 - capture SystemExit too
+        tb_text = traceback.format_exc()
+        emit("")
+        emit("出错了:")
+        emit(f"  {exc!r}")
+        emit("")
+        emit("--- 详细信息 ---")
+        for line in tb_text.splitlines():
+            emit(line)
+        dump_crash_log(repr(exc), tb_text)
+        _pause("出错了,按回车键关闭...")
         return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except BaseException as exc:  # last-resort guard so exe never silently dies
+        try:
+            with open(_crash_log_path(), "w", encoding="utf-8") as f:
+                f.write(f"主入口崩溃: {exc!r}\n\n")
+                f.write(traceback.format_exc())
+        except Exception:
+            pass
+        try:
+            print(f"主入口崩溃: {exc!r}", flush=True)
+            traceback.print_exc()
+        except Exception:
+            pass
+        _pause("出错了,按回车键关闭...")
+        sys.exit(1)
