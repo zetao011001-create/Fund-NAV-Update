@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+data/fund_nav.db
+data/attachments/*
+data/exports/*
+logs/*.log
+!data/attachments/.gitkeep
+!data/exports/.gitkeep
+!logs/.gitkeep
+.DS_Store
